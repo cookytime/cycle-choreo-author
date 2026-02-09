@@ -1,0 +1,238 @@
+  {
+    "title": "Take on Me",
+    "artist": "a-ha",
+    "album": "Hunting High and Low",
+    "spotify_id": "2WfaOiMkCvy7F5fcp2zZ8L",
+    "spotify_album_art": "https://i.scdn.co/image/ab67616d0000b273e8dd4db47e7177c63b0b7d53",
+    "spotify_url": "https://open.spotify.com/track/2WfaOiMkCvy7F5fcp2zZ8L",
+    "duration_minutes": 3.7546666666666666,
+    "bpm": null,
+    "intensity": null,
+    "focus_area": null,
+    "track_type": null,
+    "position": null,
+    "resistance_min": null,
+    "resistance_max": null,
+    "cadence_min": null,
+    "cadence_max": null,
+    "choreography": [
+      {
+        "timestamp": "0:04",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 70.0,
+        "rpmMax": 80.0,
+        "note": ""
+      },
+      {
+        "timestamp": "0:19",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 75.0,
+        "rpmMax": 85.0,
+        "note": ""
+      },
+      {
+        "timestamp": "0:35",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 65.0,
+        "rpmMax": 75.0,
+        "note": ""
+      },
+      {
+        "timestamp": "0:52",
+        "exercise": "sprint",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 75.0,
+        "rpmMax": 85.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:03",
+        "exercise": "sprint",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 80.0,
+        "rpmMax": 90.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:09",
+        "exercise": "sprint",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 90.0,
+        "rpmMax": 100.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:15",
+        "exercise": "sprint",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 65.0,
+        "rpmMax": 75.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:32",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 75.0,
+        "rpmMax": 85.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:43",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 80.0,
+        "rpmMax": 90.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:49",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 90.0,
+        "rpmMax": 100.0,
+        "note": ""
+      },
+      {
+        "timestamp": "1:54",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 65.0,
+        "rpmMax": 75.0,
+        "note": ""
+      },
+      {
+        "timestamp": "2:11",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 70.0,
+        "rpmMax": 80.0,
+        "note": ""
+      },
+      {
+        "timestamp": "2:14",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 80.0,
+        "rpmMax": 90.0,
+        "note": ""
+      },
+      {
+        "timestamp": "2:17",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 90.0,
+        "rpmMax": 100.0,
+        "note": ""
+      },
+      {
+        "timestamp": "2:34",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 65.0,
+        "rpmMax": 75.0,
+        "note": ""
+      },
+      {
+        "timestamp": "2:48",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 70.0,
+        "rpmMax": 80.0,
+        "note": ""
+      },
+      {
+        "timestamp": "2:57",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 75.0,
+        "rpmMax": 85.0,
+        "note": ""
+      },
+      {
+        "timestamp": "3:03",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 85.0,
+        "rpmMax": 95.0,
+        "note": ""
+      },
+      {
+        "timestamp": "3:08",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 95.0,
+        "rpmMax": 105.0,
+        "note": ""
+      },
+      {
+        "timestamp": "3:25",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 100.0,
+        "rpmMax": 110.0,
+        "note": ""
+      },
+      {
+        "timestamp": "3:36",
+        "exercise": "flat",
+        "resistance": "L5",
+        "gear": 5.0,
+        "position": "Ride easy",
+        "rpmMin": 65.0,
+        "rpmMax": 75.0,
+        "note": ""
+      }
+    ],
+    "cues": [],
+    "notes": null,
+    "id": "698782c85a9d7352a4afa8cd",
+    "created_date": "2026-02-07T18:22:00.983000",
+    "updated_date": "2026-02-08T03:54:32.759000",
+    "created_by_id": "69668796c37a96600dabcc5d",
+    "created_by": "glen@glencook.net",
+    "is_sample": false
+  }
