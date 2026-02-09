@@ -519,6 +519,7 @@ export default function EditorPage() {
   // Base44-style selector state
   // ----------------------------
   const [baseGear, setBaseGear] = useState<number>(5);
+  const [baseRpm, setBaseRpm] = useState<number>(75);
   const [selExercise, setSelExercise] = useState<Exercise>("flat");
   const [selGear, setSelGear] = useState<number>(5);
   const [selPosition, setSelPosition] = useState<string>("Ride easy");
@@ -530,6 +531,28 @@ export default function EditorPage() {
   useEffect(() => {
     setSelGear(baseGear);
   }, [baseGear]);
+
+  useEffect(() => {
+    // Keep a sensible default RPM window around Base RPM
+    setSelRpmMin(clamp(baseRpm - 5, 40, 160));
+    setSelRpmMax(clamp(baseRpm + 5, 40, 160));
+    setRpmTrend("");
+  }, [baseRpm]);
+
+  const applyRpmTrend = useCallback((next: "down" | "up" | "") => {
+    setRpmTrend(next);
+    if (next === "down") {
+      setSelRpmMin(clamp(baseRpm - 10, 40, 160));
+      setSelRpmMax(clamp(baseRpm, 40, 160));
+    } else if (next === "up") {
+      setSelRpmMin(clamp(baseRpm, 40, 160));
+      setSelRpmMax(clamp(baseRpm + 10, 40, 160));
+    } else {
+      setSelRpmMin(clamp(baseRpm - 5, 40, 160));
+      setSelRpmMax(clamp(baseRpm + 5, 40, 160));
+    }
+  }, [baseRpm]);
+
 
   // ----------------------------
   // Step editing helpers
@@ -909,37 +932,37 @@ export default function EditorPage() {
           </div>
         </div>
 
-        {/* Base Gear row */}
-        <div style={{ ...card, marginTop: 12, padding: 14, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-          <div style={{ fontSize: 14, opacity: 0.9 }}>Base Gear:</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {Array.from({ length: 10 }, (_, i) => i + 1).map((g) => {
-              const active = g === baseGear;
-              return (
-                <button
-                  key={g}
-                  style={{
-                    ...baseBtn,
-                    width: 44,
-                    height: 44,
-                    borderRadius: 10,
-                    fontWeight: 900,
-                    background: active ? "rgba(59,130,246,0.45)" : "rgba(255,255,255,0.06)",
-                    border: active ? "1px solid rgba(96,165,250,0.9)" : "1px solid rgba(255,255,255,0.15)",
-                  }}
-                  onClick={() => setBaseGear(g)}
-                >
-                  {g}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ marginLeft: 10, opacity: 0.8 }}>
-            Current: <b>{baseGear}</b>
-          </div>
-        </div>
+        {/* Base Gear + Base RPM */}
+<div style={{ ...card, marginTop: 12, padding: 14, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+    <div style={{ fontSize: 14, opacity: 0.9, fontWeight: 800 }}>Base Gear</div>
+    <input
+      style={{ ...inputStyle, width: 90, textAlign: "center" }}
+      type="number"
+      value={baseGear}
+      min={1}
+      max={30}
+      onChange={(e) => setBaseGear(clamp(Number(e.target.value), 1, 30))}
+    />
 
-        {/* Marking panel */}
+    <div style={{ fontSize: 14, opacity: 0.9, fontWeight: 800, marginLeft: 6 }}>Base RPM</div>
+    <input
+      style={{ ...inputStyle, width: 90, textAlign: "center" }}
+      type="number"
+      value={baseRpm}
+      min={40}
+      max={160}
+      onChange={(e) => setBaseRpm(clamp(Number(e.target.value), 40, 160))}
+    />
+  </div>
+
+  <div style={{ marginLeft: "auto", opacity: 0.8, fontSize: 12 }}>
+    Selected: <b>L{selGear}</b> • RPM: <b>{selRpmMin}–{selRpmMax}</b>
+  </div>
+</div>
+
+{/* Marking panel */}
+
         <div style={{ ...card, marginTop: 12, padding: 14 }}>
           <div style={{ display: "grid", gridTemplateColumns: isPortraitNarrow ? "1fr" : "1.2fr 1fr 1.2fr 1fr", gap: 16, alignItems: "start" }}>
             {/* Exercise */}
@@ -983,52 +1006,43 @@ export default function EditorPage() {
             <div>
               <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>Resistance</div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {[-2, -1, 0, 1].map((d) => {
-                  const g = clamp(baseGear + d, 1, 30);
-                  const active = selGear === g;
-                  return (
-                    <button
-                      key={d}
-                      style={{
-                        ...baseBtn,
-                        width: 56,
-                        height: 44,
-                        borderRadius: 10,
-                        fontWeight: 900,
-                        background: active ? "rgba(168,85,247,0.55)" : "rgba(255,255,255,0.06)",
-                        border: active ? "1px solid rgba(192,132,252,0.9)" : "1px solid rgba(255,255,255,0.15)",
-                      }}
-                      disabled={!canControl}
-                      onClick={() => setSelGear(g)}
-                    >
-                      {g}
-                    </button>
-                  );
-                })}
-                {/* plus two above base */}
-                {[2].map((d) => {
-                  const g = clamp(baseGear + d, 1, 30);
-                  const active = selGear === g;
-                  return (
-                    <button
-                      key={"p" + d}
-                      style={{
-                        ...baseBtn,
-                        width: 56,
-                        height: 44,
-                        borderRadius: 10,
-                        fontWeight: 900,
-                        background: active ? "rgba(168,85,247,0.55)" : "rgba(255,255,255,0.06)",
-                        border: active ? "1px solid rgba(192,132,252,0.9)" : "1px solid rgba(255,255,255,0.15)",
-                      }}
-                      disabled={!canControl}
-                      onClick={() => setSelGear(g)}
-                    >
-                      {g}
-                    </button>
-                  );
-                })}
-              </div>
+                {[
+  { label: "↓↓", delta: -2 },
+  { label: "↓", delta: -1 },
+  { label: "B", delta: 0 },
+  { label: "↑", delta: 1 },
+  { label: "↑↑", delta: 2 },
+  { label: "↑↑↑", delta: 3 },
+].map((item) => {
+  const g = clamp(baseGear + item.delta, 1, 30);
+  const active = selGear === g;
+  return (
+    <button
+      key={item.label}
+      style={{
+        ...baseBtn,
+        width: 64,
+        height: 52,
+        borderRadius: 10,
+        fontWeight: 900,
+        background: active ? "rgba(168,85,247,0.55)" : "rgba(255,255,255,0.06)",
+        border: active ? "1px solid rgba(192,132,252,0.9)" : "1px solid rgba(255,255,255,0.15)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 2,
+      }}
+      disabled={!canControl}
+      onClick={() => setSelGear(g)}
+      title={`L${g}`}
+    >
+      <div style={{ lineHeight: 1 }}>{item.label}</div>
+      <div style={{ fontSize: 11, opacity: 0.8, lineHeight: 1 }}>L{g}</div>
+    </button>
+  );
+})}
+</div>
 
               <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center" }}>
                 <div style={{ opacity: 0.8, fontSize: 12 }}>or</div>
@@ -1081,7 +1095,7 @@ export default function EditorPage() {
                       border: "1px solid rgba(192,132,252,0.55)",
                     }}
                     disabled={!canControl}
-                    onClick={() => setRpmTrend(rpmTrend === "down" ? "" : "down")}
+                    onClick={() => applyRpmTrend(rpmTrend === "down" ? "" : "down")}
                   >
                     RPM ↓
                   </button>
@@ -1096,7 +1110,7 @@ export default function EditorPage() {
                       border: "1px solid rgba(192,132,252,0.55)",
                     }}
                     disabled={!canControl}
-                    onClick={() => setRpmTrend(rpmTrend === "up" ? "" : "up")}
+                    onClick={() => applyRpmTrend(rpmTrend === "up" ? "" : "up")}
                   >
                     RPM ↑
                   </button>

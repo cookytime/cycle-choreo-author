@@ -7,22 +7,43 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
-*.local
-.env
+storybook-static
+coverage
 
-# Editor directories and files
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Runtime data
+*.pid
+*.seed
+*.pid.lock
+
+# Caches
+.cache
+.parcel-cache
+.vite
+.turbo
+
+# OS / Editor
+.DS_Store
+Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
+# Misc
 *storybook.log
-storybook-static
+*.local

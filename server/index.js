@@ -2,10 +2,14 @@ import express from "express";
 import pg from "pg";
 import cors from "cors";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
 dotenv.config();
 
 const { Pool } = pg;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -152,6 +156,15 @@ app.put("/api/tracks/:id/choreography", async (req, res) => {
     res.status(500).json({ error: "Failed to update choreography", details: error.message });
   }
 });
+
+// Serve the built frontend in production
+if (process.env.NODE_ENV === "production") {
+  const distPath = path.resolve(__dirname, "../dist");
+  app.use(express.static(distPath));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
 
 app.listen(port, () => {
   console.log(`🚀 API server running on http://localhost:${port}`);
