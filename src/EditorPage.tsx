@@ -265,14 +265,6 @@ export default function EditorPage() {
     }
   }, [spotifyTrackUri, spotifyReady, spotifyDeviceId, loggedIn]);
 
-  function getSpotifyNowMs() {
-    const base = spotifyBasePosRef.current;
-    const ts = spotifyBaseTsRef.current;
-    const paused = spotifyPausedRef.current;
-    if (paused) return base;
-    return base + Math.max(0, Date.now() - ts);
-  }
-
   // init spotify sdk
   useEffect(() => {
     if (!isLoggedIn()) {
@@ -307,6 +299,26 @@ export default function EditorPage() {
         setSpotifyDeviceId(device_id);
         setSpotifyReady(true);
         setSpotifyStatus("Spotify ready");
+      });
+
+      player.addListener("initialization_error", (e: any) => {
+        if (cancelled) return;
+        setSpotifyStatus(`Spotify init error: ${e?.message || "unknown"}`);
+      });
+
+      player.addListener("authentication_error", (e: any) => {
+        if (cancelled) return;
+        setSpotifyStatus(`Spotify auth error: ${e?.message || "unknown"}`);
+      });
+
+      player.addListener("account_error", (e: any) => {
+        if (cancelled) return;
+        setSpotifyStatus(`Spotify account error: ${e?.message || "unknown"}`);
+      });
+
+      player.addListener("playback_error", (e: any) => {
+        if (cancelled) return;
+        setSpotifyStatus(`Spotify playback error: ${e?.message || "unknown"}`);
       });
 
       player.addListener("not_ready", () => {
@@ -397,12 +409,59 @@ export default function EditorPage() {
     if (!spotifyReady || !spotifyDeviceId || !spotifyTrackUri) return;
     
     const token = await getValidAccessToken();
+    const player = spotifyPlayerRef.current;
+    try {
+      await player?.activateElement?.();
+    } catch {}
+    try {
+      await player?.connect?.();
+    } catch {}
+
+    const waitForDevice = async (timeoutMs = 20000, intervalMs = 500): Promise<string | null> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const devices = Array.isArray(data?.devices) ? data.devices : [];
+          const exact = devices.find((d: any) => d?.id === spotifyDeviceId);
+          if (exact?.id) return exact.id;
+          const byName = devices.find(
+            (d: any) =>
+              typeof d?.name === "string" &&
+              d.name.toLowerCase().includes("cycle choreo author")
+          );
+          if (byName?.id) {
+            setSpotifyDeviceId(byName.id);
+            return byName.id;
+          }
+          setSpotifyStatus(`Waiting for Spotify device to be ready. Found ${devices.length} device(s).`);
+        }
+        try {
+          const p = spotifyPlayerRef.current;
+          if (p) {
+            const state = await p.getCurrentState();
+            if (!state) await p.connect();
+          }
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+      return null;
+    };
+
+    const resolvedDeviceId = await waitForDevice();
+    if (!resolvedDeviceId) {
+      setSpotifyStatus("Waiting for Spotify device to be ready.");
+      return;
+    }
 
     const transferPlayback = async () => {
       const transferResponse = await fetch("https://api.spotify.com/v1/me/player", {
         method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
+        body: JSON.stringify({ device_ids: [resolvedDeviceId], play: false }),
       });
 
       return transferResponse;
@@ -419,11 +478,27 @@ export default function EditorPage() {
 
       if (!transferResponse.ok) {
         const retryError = await transferResponse.text();
+        if (isDeviceNotFound) {
+          try {
+            const devicesRes = await fetch("https://api.spotify.com/v1/me/player/devices", {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (devicesRes.ok) {
+              const data = await devicesRes.json();
+              const devices = Array.isArray(data?.devices) ? data.devices : [];
+              const names = devices.map((d: any) => d?.name).filter(Boolean).join(", ");
+              setSpotifyStatus(`Spotify device not found. Available devices: ${names || "none"}.`);
+              return;
+            }
+          } catch {}
+          setSpotifyStatus("Spotify device not found. Try pressing Play to activate the web player.");
+          return;
+        }
         throw new Error(`Failed to transfer playback: ${transferResponse.status} ${retryError || transferError}`);
       }
     }
 
-    const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(spotifyDeviceId)}`, {
+    const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(resolvedDeviceId)}`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ uris: [spotifyTrackUri] }),
@@ -672,7 +747,6 @@ export default function EditorPage() {
     pushUndo(steps);
     setSteps(imported);
     if (typeof data.track === "string" && data.source === "spotify") setSpotifyTrackUri(data.track);
-    if (typeof data.track === "string" && data.source === "wav") setWavName(data.track);
   }
 
   // Drag & drop audio/json
@@ -695,10 +769,8 @@ export default function EditorPage() {
       } catch (err) {
         alert(String(err));
       }
-    } else if (file.type.startsWith("audio/")) {
-      onPickFile(file);
     } else {
-      alert("Drop an audio file or a session JSON.");
+      alert("Drop a session JSON file.");
     }
   };
 
@@ -1150,7 +1222,7 @@ export default function EditorPage() {
             <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8, maxHeight: isPortraitNarrow ? 680 : 820, overflow: "auto" }}>
               {stepsSorted.length === 0 && <div style={{ opacity: 0.75, fontSize: 13 }}>No steps yet. Hit Play and click “Mark Cue”.</div>}
 
-              {stepsSorted.map((s) => (
+              {stepsSorted.map((s: Step) => (
                 <div key={s.id} style={{ ...card, padding: 10, borderRadius: 16, background: "rgba(255,255,255,0.04)" }}>
                   <div style={{ display: "grid", gridTemplateColumns: isPortraitNarrow ? "84px 1fr" : "92px 1fr", gap: 10, alignItems: "start" }}>
                     <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, opacity: 0.92 }}>
@@ -1173,7 +1245,7 @@ export default function EditorPage() {
                       <div style={{ display: "grid", gridTemplateColumns: isPortraitNarrow ? "1fr 1fr" : "120px 1fr 1fr 1fr 1fr", gap: 8 }}>
                         <input style={inputStyle} value={s.timestamp} onChange={(e) => updateStep(s.id, { timestamp: e.target.value })} title="Timestamp (M:SS)" />
                         <select style={selectStyle} value={s.exercise} onChange={(e) => updateStep(s.id, { exercise: e.target.value as Exercise })}>
-                          {MOVEMENTS.map((m) => (
+                          {MOVEMENTS.map((m: { key: Exercise; label: string }) => (
                             <option key={m.key} value={m.key}>
                               {m.label}
                             </option>
