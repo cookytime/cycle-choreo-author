@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { clearToken, getTokenRecord, getValidAccessToken, isLoggedIn, loginWithSpotify } from "./auth";
 
 /**
@@ -57,6 +58,9 @@ function parseTimestamp(ts: string) {
 }
 
 export default function EditorPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  
   // ----------------------------
   // Layout helpers
   // ----------------------------
@@ -138,6 +142,7 @@ export default function EditorPage() {
   function pushUndo(prevSteps: Step[]) {
     setUndoStack((u) => [...u.slice(-30), prevSteps]); // cap
     setRedoStack([]); // clear redo on new action
+    setSaveMessage(""); // clear save message when editing
   }
 
   function undo() {
@@ -163,57 +168,21 @@ export default function EditorPage() {
   const stepsSorted = useMemo(() => [...steps].sort((a, b) => a.t_ms - b.t_ms), [steps]);
 
   // ----------------------------
-  // Transport state: WAV + Spotify
+  // Transport state: Spotify only
   // ----------------------------
   const [nowMs, setNowMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-
-  // WAV
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string>("");
-  const [wavName, setWavName] = useState<string>("(no track loaded)");
-
-  function onPickFile(file: File | null) {
-    if (!file) return;
-    setUseSpotify(false);
-
-    const url = URL.createObjectURL(file);
-    setAudioUrl((old) => {
-      if (old) URL.revokeObjectURL(old);
-      return url;
-    });
-    setWavName(file.name);
-    setNowMs(0);
-    setDurationMs(0);
-    setIsPlaying(false);
-  }
-
-  useEffect(() => {
-    const a = audioRef.current;
-    if (!a) return;
-
-    const onLoaded = () => setDurationMs(Math.floor((a.duration || 0) * 1000));
-    const onPlay = () => setIsPlaying(true);
-    const onPause = () => setIsPlaying(false);
-    const onEnded = () => setIsPlaying(false);
-
-    a.addEventListener("loadedmetadata", onLoaded);
-    a.addEventListener("play", onPlay);
-    a.addEventListener("pause", onPause);
-    a.addEventListener("ended", onEnded);
-
-    return () => {
-      a.removeEventListener("loadedmetadata", onLoaded);
-      a.removeEventListener("play", onPlay);
-      a.removeEventListener("pause", onPause);
-      a.removeEventListener("ended", onEnded);
-    };
-  }, [audioUrl]);
+  
+  // Track from database
+  const [currentTrackId, setCurrentTrackId] = useState<string | null>(null);
+  const [currentTrackTitle, setCurrentTrackTitle] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string>("");
 
   // Spotify
   const spotifyPlayerRef = useRef<any>(null);
-  const [useSpotify, setUseSpotify] = useState(false);
+  const autoLoadedRef = useRef<string | null>(null);
   const [spotifyTrackUri, setSpotifyTrackUri] = useState<string>("");
   const [spotifyDeviceId, setSpotifyDeviceId] = useState<string>("");
   const [spotifyReady, setSpotifyReady] = useState(false);
@@ -233,15 +202,79 @@ export default function EditorPage() {
   }
 
   const getCurrentTimeMs = useCallback(() => {
-    if (useSpotify) return getSpotifyNowMs();
-    if (audioRef.current) return audioRef.current.currentTime * 1000;
-    return 0;
-  }, [useSpotify]);
+    return getSpotifyNowMs();
+  }, []);
+
+  // Check login status
+  const tokenRec = getTokenRecord();
+  const loggedIn = !!tokenRec?.access_token;
+
+  // Handle track selected from database
+  useEffect(() => {
+    const selectedTrack = (location.state as any)?.selectedTrack;
+    if (selectedTrack) {
+      // Store the track ID and title for saving later
+      setCurrentTrackId(selectedTrack.spotify_id);
+      setCurrentTrackTitle(selectedTrack.title);
+      
+      // Extract Spotify URI from URL or use spotify_id
+      let uri = "";
+      if (selectedTrack.spotify_url) {
+        // Convert URL like "https://open.spotify.com/track/ABC123" to "spotify:track:ABC123"
+        const match = selectedTrack.spotify_url.match(/\/track\/([a-zA-Z0-9]+)/);
+        if (match) {
+          uri = `spotify:track:${match[1]}`;
+        }
+      } else if (selectedTrack.spotify_id) {
+        uri = `spotify:track:${selectedTrack.spotify_id}`;
+      }
+      
+      if (uri) {
+        setSpotifyTrackUri(uri);
+        // Convert duration_minutes to milliseconds
+        const durationMs = selectedTrack.duration_minutes 
+          ? Math.round(selectedTrack.duration_minutes * 60 * 1000) 
+          : 0;
+        setDurationMs(durationMs);
+        
+        // Load existing choreography if present
+        if (selectedTrack.choreography && Array.isArray(selectedTrack.choreography)) {
+          setSteps(selectedTrack.choreography);
+        }
+        
+        // Clear the location state so it doesn't reload on refresh
+        navigate(location.pathname, { replace: true, state: {} });
+      }
+    }
+  }, [location.state]);
+
+  // Auto-load track when URI is set and player is ready
+  useEffect(() => {
+    if (spotifyReady && spotifyDeviceId && spotifyTrackUri && loggedIn) {
+      // Only auto-load if we haven't already loaded this URI
+      if (autoLoadedRef.current !== spotifyTrackUri) {
+        autoLoadedRef.current = spotifyTrackUri;
+        const timer = setTimeout(() => {
+          spotifyLoadAndPlay().catch((e) => {
+            setSpotifyStatus(`Error: ${e.message || 'Failed to load track'}`);
+            autoLoadedRef.current = null;
+          });
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [spotifyTrackUri, spotifyReady, spotifyDeviceId, loggedIn]);
+
+  function getSpotifyNowMs() {
+    const base = spotifyBasePosRef.current;
+    const ts = spotifyBaseTsRef.current;
+    const paused = spotifyPausedRef.current;
+    if (paused) return base;
+    return base + Math.max(0, Date.now() - ts);
+  }
 
   // init spotify sdk
   useEffect(() => {
-    if (!useSpotify) return;
-
     if (!isLoggedIn()) {
       setSpotifyStatus("Not logged in. Click “Login with Spotify”.");
       setSpotifyReady(false);
@@ -279,6 +312,7 @@ export default function EditorPage() {
       player.addListener("not_ready", () => {
         if (cancelled) return;
         setSpotifyReady(false);
+        setSpotifyDeviceId("");
         setSpotifyStatus("Spotify not ready");
       });
 
@@ -323,63 +357,34 @@ export default function EditorPage() {
       setSpotifyReady(false);
       setSpotifyDeviceId("");
     };
-  }, [useSpotify]);
+  }, [loggedIn]);
 
   // keep nowMs updated
   useEffect(() => {
     let raf = 0;
     const tick = () => {
-      if (useSpotify) {
-        const n = getSpotifyNowMs();
-        const max = durationMs || spotifyDurationRef.current || Number.MAX_SAFE_INTEGER;
-        setNowMs(clamp(Math.floor(n), 0, max));
-      } else {
-        const a = audioRef.current;
-        if (a && audioUrl) setNowMs(Math.floor(a.currentTime * 1000));
-      }
+      const n = getSpotifyNowMs();
+      const max = durationMs || spotifyDurationRef.current || Number.MAX_SAFE_INTEGER;
+      setNowMs(clamp(Math.floor(n), 0, max));
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [useSpotify, audioUrl, durationMs]);
+  }, [durationMs]);
 
   async function togglePlay() {
-    if (useSpotify) {
-      const p = spotifyPlayerRef.current;
-      if (!p || !spotifyReady || !spotifyDeviceId) return;
-      try {
-        await p.activateElement?.();
-      } catch {}
-      const state = await p.getCurrentState();
-      if (!state || (spotifyTrackUri && state.track_window?.current_track?.uri !== spotifyTrackUri)) {
-        await spotifyLoadAndPlay();
-        return;
-      }
-      await p.togglePlay();
-      return;
-    }
-    const a = audioRef.current;
-    if (!a || !audioUrl) return;
-    if (a.paused) await a.play();
-    else a.pause();
+    const p = spotifyPlayerRef.current;
+    if (!p) return;
+    await p.togglePlay();
   }
 
   async function seekTo(targetMs: number) {
     const t = clamp(targetMs, 0, durationMs || 0);
-
-    if (useSpotify) {
-      const p = spotifyPlayerRef.current;
-      if (!p) return;
-      await p.seek(t);
-      spotifyBasePosRef.current = t;
-      spotifyBaseTsRef.current = Date.now();
-      setNowMs(t);
-      return;
-    }
-
-    const a = audioRef.current;
-    if (!a || !audioUrl) return;
-    a.currentTime = t / 1000;
+    const p = spotifyPlayerRef.current;
+    if (!p) return;
+    await p.seek(t);
+    spotifyBasePosRef.current = t;
+    spotifyBaseTsRef.current = Date.now();
     setNowMs(t);
   }
 
@@ -390,19 +395,49 @@ export default function EditorPage() {
 
   async function spotifyLoadAndPlay() {
     if (!spotifyReady || !spotifyDeviceId || !spotifyTrackUri) return;
+    
     const token = await getValidAccessToken();
 
-    await fetch("https://api.spotify.com/v1/me/player", {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
-    });
+    const transferPlayback = async () => {
+      const transferResponse = await fetch("https://api.spotify.com/v1/me/player", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
+      });
 
-    await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(spotifyDeviceId)}`, {
+      return transferResponse;
+    };
+
+    let transferResponse = await transferPlayback();
+    if (!transferResponse.ok) {
+      const transferError = await transferResponse.text();
+      const isDeviceNotFound = transferResponse.status === 404 || transferError.toLowerCase().includes("device not found");
+      if (isDeviceNotFound) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        transferResponse = await transferPlayback();
+      }
+
+      if (!transferResponse.ok) {
+        const retryError = await transferResponse.text();
+        throw new Error(`Failed to transfer playback: ${transferResponse.status} ${retryError || transferError}`);
+      }
+    }
+
+    const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(spotifyDeviceId)}`, {
       method: "PUT",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ uris: [spotifyTrackUri] }),
     });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      const isDeviceNotFound = response.status === 404 || error.toLowerCase().includes("device not found");
+      if (isDeviceNotFound) {
+        setSpotifyStatus(`Waiting for Spotify device to be ready. ${error || "Device not found."}`);
+        return;
+      }
+      throw new Error(`Failed to play track: ${response.status} ${error}`);
+    }
   }
 
   // ----------------------------
@@ -554,15 +589,15 @@ export default function EditorPage() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [useSpotify, durationMs, nowMs, selExercise, selGear, selPosition, selRpmMin, selRpmMax, selNote, rpmTrend]);
+  }, [durationMs, nowMs, selExercise, selGear, selPosition, selRpmMin, selRpmMax, selNote, rpmTrend]);
 
   // Export / Import
   function exportSession() {
     const payload = {
       version: 1,
       created_at: new Date().toISOString(),
-      source: useSpotify ? "spotify" : "wav",
-      track: useSpotify ? spotifyTrackUri : wavName,
+      source: "spotify",
+      track: spotifyTrackUri,
       duration_ms: durationMs,
       steps: stepsSorted,
     };
@@ -570,9 +605,47 @@ export default function EditorPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `cycle_choreo_${useSpotify ? "spotify" : "wav"}.json`;
+    a.download = `cycle_choreo_spotify.json`;
     a.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function saveChoreography() {
+    if (!currentTrackId) {
+      alert("No track loaded from database. Use 'Load from DB' to select a track first.");
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveMessage("");
+
+    try {
+      const response = await fetch(`/api/tracks/${currentTrackId}/choreography`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          choreography: stepsSorted,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to save choreography");
+      }
+
+      const result = await response.json();
+      setSaveMessage(`✓ Saved to database: ${currentTrackTitle}`);
+      
+      // Clear message after 3 seconds
+      setTimeout(() => setSaveMessage(""), 3000);
+    } catch (error: any) {
+      setSaveMessage(`✗ Error: ${error.message}`);
+      setTimeout(() => setSaveMessage(""), 5000);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   async function importSession(file: File) {
@@ -632,12 +705,9 @@ export default function EditorPage() {
   // ----------------------------
   // Header labels
   // ----------------------------
-  const trackName = useSpotify ? (spotifyTrackUri || "(no track loaded)") : wavName;
+  const trackName = currentTrackTitle || spotifyTrackUri || "(no track loaded)";
   const playbackLabel = `${formatTimestamp(nowMs)} / ${formatTimestamp(durationMs || 0)}`;
-  const canControl = useSpotify ? spotifyReady : !!audioUrl;
-
-  const tokenRec = getTokenRecord();
-  const loggedIn = !!tokenRec?.access_token;
+  const canControl = spotifyReady;
 
   return (
     <div style={{ ...bg, backgroundColor: isDragging ? "#111827" : undefined }} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
@@ -652,9 +722,14 @@ export default function EditorPage() {
                 style={smallBtn}
                 onClick={() => {
                   clearToken();
+                  if (spotifyPlayerRef.current) {
+                    spotifyPlayerRef.current.disconnect();
+                    spotifyPlayerRef.current = null;
+                  }
                   setSpotifyReady(false);
                   setSpotifyDeviceId("");
                   setSpotifyStatus("Logged out");
+                  window.location.reload();
                 }}
               >
                 Logout
@@ -706,62 +781,60 @@ export default function EditorPage() {
             Export
           </button>
 
-          {/* WAV load */}
-          <label style={{ ...smallBtn, display: "inline-flex", alignItems: "center", gap: 8 }}>
-            Load
-            <input type="file" accept="audio/*" style={{ display: "none" }} onChange={(e) => onPickFile(e.target.files?.[0] ?? null)} />
-          </label>
+          {/* Save to DB button */}
+          <button 
+            style={{
+              ...smallBtn,
+              background: currentTrackId ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.06)",
+              borderColor: currentTrackId ? "rgba(34,197,94,0.4)" : "rgba(255,255,255,0.15)",
+            }}
+            onClick={saveChoreography} 
+            disabled={!currentTrackId || isSaving || stepsSorted.length === 0}
+          >
+            {isSaving ? "Saving..." : "Save to DB"}
+          </button>
+
+          {/* Load from database */}
+          <button style={smallBtn} onClick={() => navigate("/tracks")}>
+            Load Track
+          </button>
         </div>
 
-        {/* Spotify transport row */}
+        {/* Save message feedback */}
+        {saveMessage && (
+          <div 
+            style={{ 
+              ...card, 
+              marginTop: 12, 
+              padding: "10px 16px", 
+              background: saveMessage.startsWith("✓") ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+              borderColor: saveMessage.startsWith("✓") ? "rgba(34,197,94,0.4)" : "rgba(239,68,68,0.4)",
+              fontSize: 14,
+              fontWeight: 600,
+              textAlign: "center"
+            }}
+          >
+            {saveMessage}
+          </div>
+        )}
+
+        {/* Spotify status row */}
         <div style={{ ...card, marginTop: 12, padding: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input
-              type="checkbox"
-              checked={useSpotify}
-              onChange={(e) => {
-                const on = e.target.checked;
-                setUseSpotify(on);
-                setIsPlaying(false);
-                setNowMs(0);
-                setDurationMs(0);
-                if (on && !isLoggedIn()) setSpotifyStatus("Not logged in. Click “Login with Spotify”.");
-              }}
-            />
-            <strong>Use Spotify</strong>
-          </label>
+          <div style={{ fontSize: 14, opacity: 0.85 }}>
+            {spotifyTrackUri ? (
+              <>
+                <strong>Loaded:</strong> {currentTrackTitle || spotifyTrackUri}
+              </>
+            ) : (
+              "No track loaded. Use 'Load Track' button to select from database."
+            )}
+          </div>
 
-          {useSpotify ? (
-            <>
-              <label style={{ display: "flex", gap: 8, alignItems: "center", flex: "1 1 420px" }}>
-                <span style={{ opacity: 0.85 }}>Track URI:</span>
-                <input
-                  value={spotifyTrackUri}
-                  onChange={(e) => setSpotifyTrackUri(e.target.value.trim())}
-                  placeholder="spotify:track:xxxxxxxxxxxxxxxxxxxx"
-                  style={{ ...inputStyle, width: "100%" }}
-                />
-              </label>
-
-              <button
-                style={{
-                  ...smallBtn,
-                  background: spotifyReady ? "rgba(168,85,247,0.22)" : "rgba(255,255,255,0.06)",
-                  border: spotifyReady ? "1px solid rgba(192,132,252,0.55)" : "1px solid rgba(255,255,255,0.15)",
-                }}
-                disabled={!spotifyReady || !spotifyTrackUri || !loggedIn}
-                onClick={() => spotifyLoadAndPlay().catch((e) => alert(String(e?.message || e)))}
-              >
-                Load Track
-              </button>
-
-              <span style={{ color: spotifyReady ? "#34d399" : "#fca5a5", fontWeight: 800 }}>
-                {spotifyReady ? "Spotify ready" : "Spotify not ready"}
-              </span>
-            </>
-          ) : (
-            <div style={{ opacity: 0.75, fontSize: 12 }}>Spotify disabled. Use the Load button above to pick an audio file.</div>
-          )}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 12, alignItems: "center" }}>
+            <span style={{ color: spotifyReady ? "#34d399" : "#fca5a5", fontWeight: 800, fontSize: 13 }}>
+              {spotifyReady ? "● Spotify ready" : "○ Spotify not ready"}
+            </span>
+          </div>
         </div>
 
         {/* Base Gear row */}
@@ -1050,16 +1123,12 @@ export default function EditorPage() {
         {/* Bottom: audio + steps list */}
         <div style={{ display: "grid", gridTemplateColumns: isPortraitNarrow ? "1fr" : "0.9fr 1.1fr", gap: 12, marginTop: 12 }}>
           <div style={{ ...card, padding: 12 }}>
-            {!useSpotify ? (
-              <audio ref={audioRef} src={audioUrl || undefined} controls style={{ width: "100%" }} />
-            ) : (
-              <div style={{ padding: 14, borderRadius: 14, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.12)" }}>
-                <div style={{ fontSize: 12, opacity: 0.75 }}>Spotify playback</div>
-                <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
-                  Use <b>Back/Play/Fwd</b> above to control the track. (Spotify Web Playback SDK)
-                </div>
+            <div style={{ padding: 14, borderRadius: 14, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.12)" }}>
+              <div style={{ fontSize: 12, opacity: 0.75 }}>Spotify playback</div>
+              <div style={{ marginTop: 6, fontSize: 13, opacity: 0.9 }}>
+                Use <b>Back/Play/Fwd</b> above to control the track. (Spotify Web Playback SDK)
               </div>
-            )}
+            </div>
 
             <div style={{ marginTop: 10, ...card, padding: 10 }}>
               <div style={{ fontSize: 12, opacity: 0.75 }}>Active</div>

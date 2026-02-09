@@ -4,7 +4,7 @@ const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID as string;
 // IMPORTANT: Must match exactly what's configured in your Spotify app settings
 export const REDIRECT_URI = import.meta.env.VITE_SPOTIFY_REDIRECT_URI || "http://127.0.0.1:8888/callback";
 
-export const SCOPES = "streaming user-read-playback-state user-modify-playback-state user-read-currently-playing";
+export const SCOPES = "streaming user-read-email user-read-private user-read-playback-state user-modify-playback-state user-read-currently-playing";
 
 type TokenRecord = {
   access_token: string;
