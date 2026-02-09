@@ -312,6 +312,7 @@ export default function EditorPage() {
       player.addListener("not_ready", () => {
         if (cancelled) return;
         setSpotifyReady(false);
+        setSpotifyDeviceId("");
         setSpotifyStatus("Spotify not ready");
       });
 
@@ -397,11 +398,30 @@ export default function EditorPage() {
     
     const token = await getValidAccessToken();
 
-    await fetch("https://api.spotify.com/v1/me/player", {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
-    });
+    const transferPlayback = async () => {
+      const transferResponse = await fetch("https://api.spotify.com/v1/me/player", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
+      });
+
+      return transferResponse;
+    };
+
+    let transferResponse = await transferPlayback();
+    if (!transferResponse.ok) {
+      const transferError = await transferResponse.text();
+      const isDeviceNotFound = transferResponse.status === 404 || transferError.toLowerCase().includes("device not found");
+      if (isDeviceNotFound) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        transferResponse = await transferPlayback();
+      }
+
+      if (!transferResponse.ok) {
+        const retryError = await transferResponse.text();
+        throw new Error(`Failed to transfer playback: ${transferResponse.status} ${retryError || transferError}`);
+      }
+    }
 
     const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(spotifyDeviceId)}`, {
       method: "PUT",
