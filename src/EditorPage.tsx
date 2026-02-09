@@ -431,6 +431,11 @@ export default function EditorPage() {
     
     if (!response.ok) {
       const error = await response.text();
+      const isDeviceNotFound = response.status === 404 || error.toLowerCase().includes("device not found");
+      if (isDeviceNotFound) {
+        setSpotifyStatus(`Waiting for Spotify device to be ready. ${error || "Device not found."}`);
+        return;
+      }
       throw new Error(`Failed to play track: ${response.status} ${error}`);
     }
   }
