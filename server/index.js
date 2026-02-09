@@ -166,8 +166,8 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-app.listen(port, () => {
-  console.log(`🚀 API server running on http://localhost:${port}`);
+app.listen(port, "0.0.0.0", () => {
+  console.log(`🚀 API server running on http://0.0.0.0:${port}`);
 });
 
 // Graceful shutdown
