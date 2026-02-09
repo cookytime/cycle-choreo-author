@@ -312,6 +312,7 @@ export default function EditorPage() {
       player.addListener("not_ready", () => {
         if (cancelled) return;
         setSpotifyReady(false);
+        setSpotifyDeviceId("");
         setSpotifyStatus("Spotify not ready");
       });
 
@@ -397,11 +398,39 @@ export default function EditorPage() {
     
     const token = await getValidAccessToken();
 
-    await fetch("https://api.spotify.com/v1/me/player", {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
-    });
+    const transferPlayback = async () => {
+      const transferResponse = await fetch("https://api.spotify.com/v1/me/player", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ device_ids: [spotifyDeviceId], play: false }),
+      });
+
+      return transferResponse;
+    };
+
+    let transferResponse: Response | null = null;
+    let transferError = "";
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      transferResponse = await transferPlayback();
+      if (transferResponse.ok) break;
+
+      transferError = await transferResponse.text();
+      const isDeviceNotFound =
+        transferResponse.status === 404 || transferError.toLowerCase().includes("device not found");
+
+      if (isDeviceNotFound) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
+      }
+
+      throw new Error(`Failed to transfer playback: ${transferResponse.status} ${transferError}`);
+    }
+
+    if (!transferResponse || !transferResponse.ok) {
+      setSpotifyStatus(`Waiting for Spotify device to be ready. ${transferError || "Device not found."}`);
+      return;
+    }
 
     const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(spotifyDeviceId)}`, {
       method: "PUT",
@@ -411,6 +440,11 @@ export default function EditorPage() {
     
     if (!response.ok) {
       const error = await response.text();
+      const isDeviceNotFound = response.status === 404 || error.toLowerCase().includes("device not found");
+      if (isDeviceNotFound) {
+        setSpotifyStatus(`Waiting for Spotify device to be ready. ${error || "Device not found."}`);
+        return;
+      }
       throw new Error(`Failed to play track: ${response.status} ${error}`);
     }
   }
