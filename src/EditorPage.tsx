@@ -346,7 +346,15 @@ export default function EditorPage() {
   async function togglePlay() {
     if (useSpotify) {
       const p = spotifyPlayerRef.current;
-      if (!p) return;
+      if (!p || !spotifyReady || !spotifyDeviceId) return;
+      try {
+        await p.activateElement?.();
+      } catch {}
+      const state = await p.getCurrentState();
+      if (!state || (spotifyTrackUri && state.track_window?.current_track?.uri !== spotifyTrackUri)) {
+        await spotifyLoadAndPlay();
+        return;
+      }
       await p.togglePlay();
       return;
     }
