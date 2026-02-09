@@ -1,11 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { clearToken, getTokenRecord, getValidAccessToken, isLoggedIn, loginWithSpotify } from "./auth";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clearToken, getTokenRecord, getValidAccessToken, isLoggedIn, loginWithSpotify, REDIRECT_URI } from "./auth";
 
 /**
  * Choreo Marker Editor (WAV or Spotify)
- *
- * WAV mode: load a local audio file and scrub precisely.
- * Spotify mode: uses Spotify Web Playback SDK (Premium required) + OAuth (PKCE) on localhost.
  */
 
 type Marker = {
@@ -13,6 +10,8 @@ type Marker = {
   label: string;
   t_ms: number; // position in milliseconds
 };
+
+const MARKERS_LS_KEY = "choreo_markers_backup";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -30,8 +29,21 @@ function uid() {
 }
 
 export default function EditorPage() {
-  // Shared editor state
-  const [markers, setMarkers] = useState<Marker[]>([]);
+  // Suggestion 3: Persist Markers to LocalStorage
+  const [markers, setMarkers] = useState<Marker[]>(() => {
+    try {
+      const saved = localStorage.getItem(MARKERS_LS_KEY);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Save markers whenever they change
+  useEffect(() => {
+    localStorage.setItem(MARKERS_LS_KEY, JSON.stringify(markers));
+  }, [markers]);
+
   const [nowMs, setNowMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isPlayingUI, setIsPlayingUI] = useState(false);
@@ -62,6 +74,13 @@ export default function EditorPage() {
     return base + Math.max(0, Date.now() - ts);
   }
 
+  // Helper to get current time regardless of mode (for shortcuts)
+  const getCurrentTimeMs = useCallback(() => {
+    if (useSpotify) return getSpotifyNowMs();
+    if (audioRef.current) return audioRef.current.currentTime * 1000;
+    return 0;
+  }, [useSpotify]);
+
   // WAV listeners
   useEffect(() => {
     const a = audioRef.current;
@@ -85,11 +104,10 @@ export default function EditorPage() {
     };
   }, [audioUrl]);
 
-  // Spotify SDK init
+  // Suggestion 6: Robust Spotify SDK init
   useEffect(() => {
     if (!useSpotify) return;
 
-    // Ensure logged in
     if (!isLoggedIn()) {
       setSpotifyStatus("Not logged in. Click “Login with Spotify”.");
       setSpotifyReady(false);
@@ -98,29 +116,17 @@ export default function EditorPage() {
 
     let cancelled = false;
 
-    const existing = document.getElementById("spotify-sdk");
-    if (!existing) {
-      const s = document.createElement("script");
-      s.id = "spotify-sdk";
-      s.src = "https://sdk.scdn.co/spotify-player.js";
-      s.async = true;
-      document.body.appendChild(s);
-    }
-
-    (window as any).onSpotifyWebPlaybackSDKReady = async () => {
-      if (cancelled) return;
+    const initPlayer = async () => {
       const Spotify = (window as any).Spotify;
-      if (!Spotify) return;
+      if (!Spotify) return; // Should not happen if script loaded
 
       const player = new Spotify.Player({
         name: "Choreo Editor (Web)",
-        // getOAuthToken can be async (we call cb when we have it)
         getOAuthToken: async (cb: (t: string) => void) => {
           try {
             const t = await getValidAccessToken();
             cb(t);
           } catch (e) {
-            // force relogin
             setSpotifyStatus("Token invalid. Please log in again.");
           }
         },
@@ -130,18 +136,20 @@ export default function EditorPage() {
       spotifyPlayerRef.current = player;
 
       player.addListener("ready", ({ device_id }: any) => {
+        if (cancelled) return;
         setSpotifyDeviceId(device_id);
         setSpotifyReady(true);
         setSpotifyStatus("Spotify ready");
       });
 
       player.addListener("not_ready", () => {
+        if (cancelled) return;
         setSpotifyReady(false);
         setSpotifyStatus("Spotify not ready");
       });
 
       player.addListener("player_state_changed", (state: any) => {
-        if (!state) return;
+        if (cancelled || !state) return;
 
         spotifyBasePosRef.current = state.position ?? 0;
         spotifyBaseTsRef.current = Date.now();
@@ -155,6 +163,24 @@ export default function EditorPage() {
 
       player.connect();
     };
+
+    if ((window as any).Spotify) {
+      // SDK already loaded, init immediately
+      initPlayer();
+    } else {
+      // Load SDK
+      (window as any).onSpotifyWebPlaybackSDKReady = () => {
+        if (!cancelled) initPlayer();
+      };
+      const existing = document.getElementById("spotify-sdk");
+      if (!existing) {
+        const s = document.createElement("script");
+        s.id = "spotify-sdk";
+        s.src = "https://sdk.scdn.co/spotify-player.js";
+        s.async = true;
+        document.body.appendChild(s);
+      }
+    }
 
     return () => {
       cancelled = true;
@@ -221,7 +247,9 @@ export default function EditorPage() {
   }
 
   async function seekBy(deltaMs: number) {
-    await seekTo(nowMs + deltaMs);
+    // Use fresh current time for relative seeking
+    const current = getCurrentTimeMs();
+    await seekTo(current + deltaMs);
   }
 
   async function spotifyLoadAndPlay() {
@@ -286,6 +314,36 @@ export default function EditorPage() {
     );
   }
 
+  // Suggestion 2: Keyboard Shortcuts
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input
+      if ((e.target as HTMLElement).tagName === "INPUT") return;
+
+      switch (e.code) {
+        case "Space":
+          e.preventDefault();
+          togglePlay();
+          break;
+        case "ArrowLeft":
+          e.preventDefault();
+          seekBy(e.shiftKey ? -5000 : -2000);
+          break;
+        case "ArrowRight":
+          e.preventDefault();
+          seekBy(e.shiftKey ? 5000 : 2000);
+          break;
+        case "KeyM":
+          e.preventDefault();
+          addMarker(getCurrentTimeMs());
+          break;
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [useSpotify, durationMs, getCurrentTimeMs]); // Dependencies for closure stability
+
   function exportJson() {
     const payload = {
       version: 1,
@@ -304,8 +362,7 @@ export default function EditorPage() {
     URL.revokeObjectURL(url);
   }
 
-  async function importJson(file: File) {
-    const text = await file.text();
+  async function processImportJson(text: string) {
     const data = JSON.parse(text);
     if (!data || !Array.isArray(data.markers)) throw new Error("Invalid file: missing markers[]");
     const imported: Marker[] = data.markers
@@ -321,6 +378,45 @@ export default function EditorPage() {
     if (typeof data.spotify_track_uri === "string") setSpotifyTrackUri(data.spotify_track_uri);
   }
 
+  async function importJson(file: File) {
+    const text = await file.text();
+    await processImportJson(text);
+  }
+
+  // Suggestion 7: Drag and Drop
+  const [isDragging, setIsDragging] = useState(false);
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+  const onDragLeave = () => setIsDragging(false);
+  const onDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    if (file.type === "application/json") {
+      try {
+        await importJson(file);
+        alert("Markers imported successfully!");
+      } catch (err) {
+        alert(String(err));
+      }
+    } else if (file.type.startsWith("audio/")) {
+      setUseSpotify(false);
+      const url = URL.createObjectURL(file);
+      setAudioUrl((old) => {
+        if (old) URL.revokeObjectURL(old);
+        return url;
+      });
+      setNowMs(0);
+      setIsPlayingUI(false);
+    } else {
+      alert("Unsupported file type. Drop an audio file or JSON marker file.");
+    }
+  };
+
   const playbackLabel = useMemo(() => `${msToClock(nowMs)} / ${msToClock(durationMs)}`, [nowMs, durationMs]);
   const canControl = useSpotify ? spotifyReady : !!audioUrl;
 
@@ -328,14 +424,27 @@ export default function EditorPage() {
   const loggedIn = !!tokenRec?.access_token;
 
   return (
-    <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial", padding: 16, maxWidth: 1100, margin: "0 auto" }}>
+    <div
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      style={{
+        fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial",
+        padding: 16,
+        maxWidth: 1100,
+        margin: "0 auto",
+        minHeight: "100vh",
+        backgroundColor: isDragging ? "#2a2a2a" : "transparent",
+        transition: "background-color 0.2s",
+      }}
+    >
       <h1 style={{ margin: 0 }}>Choreo Marker Editor</h1>
-      <p style={{ marginTop: 8, color: "#444" }}>
-        Mark choreography points while playing music. Use WAV for exact scrubbing, or Spotify for live playback (Premium required).
+      <p style={{ marginTop: 8, color: "#888" }}>
+        Mark choreography points. Drag & Drop audio/JSON anywhere. Shortcuts: <strong>Space</strong> (Play), <strong>Arrows</strong> (Seek), <strong>M</strong> (Mark).
       </p>
 
       {/* Spotify auth bar */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", padding: 12, border: "1px solid #ddd", borderRadius: 12 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", padding: 12, border: "1px solid #444", borderRadius: 12, background: "#1a1a1a" }}>
         <strong>Spotify:</strong>
         {loggedIn ? (
           <>
@@ -347,7 +456,7 @@ export default function EditorPage() {
                 setSpotifyDeviceId("");
                 setSpotifyStatus("Logged out");
               }}
-              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}
+              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}
             >
               Logout
             </button>
@@ -357,18 +466,18 @@ export default function EditorPage() {
             <span style={{ color: "#a66" }}>Not logged in</span>
             <button
               onClick={() => loginWithSpotify().catch((e) => alert(String(e?.message || e)))}
-              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}
+              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}
             >
               Login with Spotify
             </button>
           </>
         )}
 
-        <span style={{ marginLeft: "auto", color: "#666" }}>{spotifyStatus}</span>
+        <span style={{ marginLeft: "auto", color: "#888" }}>{spotifyStatus}</span>
       </div>
 
       {/* Transport Mode */}
-      <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", padding: 12, border: "1px solid #ddd", borderRadius: 12 }}>
+      <div style={{ marginTop: 12, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", padding: 12, border: "1px solid #444", borderRadius: 12, background: "#1a1a1a" }}>
         <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             type="checkbox"
@@ -412,14 +521,14 @@ export default function EditorPage() {
                 value={spotifyTrackUri}
                 onChange={(e) => setSpotifyTrackUri(e.target.value.trim())}
                 placeholder="spotify:track:xxxxxxxxxxxxxxxxxxxx"
-                style={{ width: "100%" }}
+                style={{ width: "100%", padding: 6, borderRadius: 4, border: "1px solid #555", background: "#333", color: "#fff" }}
               />
             </label>
 
             <button
               onClick={() => spotifyLoadAndPlay().catch((e) => alert(String(e?.message || e)))}
               disabled={!spotifyReady || !spotifyTrackUri || !loggedIn}
-              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}
+              style={{ padding: "8px 12px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}
               title={!spotifyReady ? "Waiting for Spotify SDK/device…" : "Transfers playback to this browser and plays the track"}
             >
               Load Track
@@ -440,21 +549,21 @@ export default function EditorPage() {
         <button
           onClick={() => togglePlay().catch((e) => alert(String(e?.message || e)))}
           disabled={!canControl}
-          style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}
+          style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer", minWidth: 80 }}
         >
           {isPlayingUI ? "Pause" : "Play"}
         </button>
 
-        <button onClick={() => seekBy(-5000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
+        <button onClick={() => seekBy(-5000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer" }}>
           -5s
         </button>
-        <button onClick={() => seekBy(-2000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
+        <button onClick={() => seekBy(-2000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer" }}>
           -2s
         </button>
-        <button onClick={() => seekBy(2000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
+        <button onClick={() => seekBy(2000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer" }}>
           +2s
         </button>
-        <button onClick={() => seekBy(5000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
+        <button onClick={() => seekBy(5000)} disabled={!canControl} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer" }}>
           +5s
         </button>
 
@@ -464,22 +573,22 @@ export default function EditorPage() {
       </div>
 
       {/* Timeline */}
-      <div style={{ marginTop: 12, padding: 12, border: "1px solid #eee", borderRadius: 12 }}>
+      <div style={{ marginTop: 12, padding: 12, border: "1px solid #444", borderRadius: 12, background: "#1a1a1a" }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button
-            onClick={() => addMarker(nowMs)}
+            onClick={() => addMarker(getCurrentTimeMs())}
             disabled={!canControl}
-            style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}
+            style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer", background: "#334" }}
           >
             Add marker @ now
           </button>
 
-          <button onClick={() => exportJson()} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
+          <button onClick={() => exportJson()} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer" }}>
             Export JSON
           </button>
 
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span>Import JSON:</span>
+            <span>Import:</span>
             <input
               type="file"
               accept="application/json"
@@ -491,13 +600,43 @@ export default function EditorPage() {
             />
           </label>
 
-          <button onClick={() => setMarkers([])} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
+          <button 
+            onClick={() => {
+              if (confirm("Clear all markers?")) {
+                setMarkers([]);
+                localStorage.removeItem(MARKERS_LS_KEY);
+              }
+            }} 
+            style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #555", cursor: "pointer" }}
+          >
             Clear
           </button>
         </div>
 
-        {/* Scrub bar */}
-        <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+        {/* Suggestion 5: Visualize Markers on Scrub bar */}
+        <div style={{ marginTop: 20, position: "relative", height: 24, display: "flex", alignItems: "center" }}>
+          {/* Marker ticks behind slider */}
+          <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+            {durationMs > 0 && markers.map(m => {
+              const pct = (m.t_ms / durationMs) * 100;
+              if (pct < 0 || pct > 100) return null;
+              return (
+                <div 
+                  key={m.id}
+                  style={{
+                    position: "absolute",
+                    left: `${pct}%`,
+                    height: "100%",
+                    width: 2,
+                    background: "rgba(255, 200, 0, 0.7)",
+                    transform: "translateX(-50%)",
+                    zIndex: 0
+                  }}
+                />
+              );
+            })}
+          </div>
+
           <input
             type="range"
             min={0}
@@ -507,60 +646,61 @@ export default function EditorPage() {
             onMouseUp={() => seekTo(nowMs)}
             onTouchEnd={() => seekTo(nowMs)}
             disabled={!canControl || !durationMs}
-            style={{ width: "100%" }}
+            style={{ width: "100%", margin: 0, zIndex: 1, position: "relative", cursor: "pointer" }}
           />
-          <button onClick={() => seekTo(nowMs)} disabled={!canControl || !durationMs} style={{ padding: "10px 14px", borderRadius: 12, border: "1px solid #ccc", cursor: "pointer" }}>
-            Seek
-          </button>
         </div>
       </div>
 
       {/* Marker list */}
-      <div style={{ marginTop: 14, padding: 12, border: "1px solid #eee", borderRadius: 12 }}>
+      <div style={{ marginTop: 14, padding: 12, border: "1px solid #444", borderRadius: 12, background: "#1a1a1a" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
           <h2 style={{ margin: 0 }}>Markers</h2>
-          <span style={{ color: "#666" }}>{markers.length} total</span>
+          <span style={{ color: "#888" }}>{markers.length} total</span>
         </div>
 
         {markers.length === 0 ? (
-          <p style={{ color: "#666" }}>No markers yet. Hit “Add marker @ now” while the track plays.</p>
+          <p style={{ color: "#888" }}>No markers yet. Hit “Add marker @ now” (or press M) while the track plays.</p>
         ) : (
           <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
             {markers.map((m) => (
-              <div key={m.id} style={{ display: "grid", gridTemplateColumns: "140px 1fr 260px", gap: 10, alignItems: "center", padding: 10, border: "1px solid #f0f0f0", borderRadius: 12 }}>
+              <div key={m.id} style={{ display: "grid", gridTemplateColumns: "140px 1fr 260px", gap: 10, alignItems: "center", padding: 10, border: "1px solid #333", borderRadius: 12, background: "#222" }}>
                 <div style={{ fontVariantNumeric: "tabular-nums" }}>
                   <strong>{msToClock(m.t_ms)}</strong>
-                  <div style={{ fontSize: 12, color: "#666" }}>{m.t_ms} ms</div>
+                  <div style={{ fontSize: 12, color: "#888" }}>{m.t_ms} ms</div>
                 </div>
 
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <input value={m.label} onChange={(e) => updateMarker(m.id, { label: e.target.value })} style={{ width: "100%" }} />
+                  <input 
+                    value={m.label} 
+                    onChange={(e) => updateMarker(m.id, { label: e.target.value })} 
+                    style={{ width: "100%", background: "#333", border: "1px solid #555", color: "#fff", padding: 4, borderRadius: 4 }} 
+                  />
                   <input
                     type="number"
                     value={m.t_ms}
                     onChange={(e) => updateMarker(m.id, { t_ms: Number(e.target.value) })}
-                    style={{ width: 140 }}
+                    style={{ width: 100, background: "#333", border: "1px solid #555", color: "#fff", padding: 4, borderRadius: 4 }}
                     title="Edit timestamp (ms)"
                   />
                 </div>
 
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-                  <button onClick={() => seekTo(m.t_ms)} disabled={!canControl} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}>
+                  <button onClick={() => seekTo(m.t_ms)} disabled={!canControl} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}>
                     Jump
                   </button>
-                  <button onClick={() => nudgeMarker(m.id, -250)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}>
+                  <button onClick={() => nudgeMarker(m.id, -250)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}>
                     -250ms
                   </button>
-                  <button onClick={() => nudgeMarker(m.id, -100)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}>
+                  <button onClick={() => nudgeMarker(m.id, -100)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}>
                     -100ms
                   </button>
-                  <button onClick={() => nudgeMarker(m.id, 100)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}>
+                  <button onClick={() => nudgeMarker(m.id, 100)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}>
                     +100ms
                   </button>
-                  <button onClick={() => nudgeMarker(m.id, 250)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}>
+                  <button onClick={() => nudgeMarker(m.id, 250)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}>
                     +250ms
                   </button>
-                  <button onClick={() => deleteMarker(m.id)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #ccc", cursor: "pointer" }}>
+                  <button onClick={() => deleteMarker(m.id)} style={{ padding: "8px 10px", borderRadius: 10, border: "1px solid #555", cursor: "pointer" }}>
                     Delete
                   </button>
                 </div>
@@ -570,9 +710,9 @@ export default function EditorPage() {
         )}
       </div>
 
-      <div style={{ marginTop: 16, color: "#555", fontSize: 13, lineHeight: 1.4 }}>
+      <div style={{ marginTop: 16, color: "#666", fontSize: 13, lineHeight: 1.4 }}>
         <p style={{ margin: 0 }}>
-          <strong>Spotify setup:</strong> Add this Redirect URI to your Spotify app: <code>http://127.0.0.1:8888/callback</code>. Then set <code>VITE_SPOTIFY_CLIENT_ID</code> in your <code>.env</code>.
+          <strong>Spotify setup:</strong> Add this Redirect URI to your Spotify app: <code>{REDIRECT_URI}</code>. Then set <code>VITE_SPOTIFY_CLIENT_ID</code> in your <code>.env</code>.
         </p>
         <p style={{ marginTop: 8, marginBottom: 0 }}>
           <strong>Timing tip:</strong> Web playback has a little latency. Use the nudge buttons (±100/250ms) to dial markers in.

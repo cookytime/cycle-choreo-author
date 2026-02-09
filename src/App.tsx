@@ -1,7 +1,7 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import CallbackPage from "./CallbackPage";
 import EditorPage from "./EditorPage";
+import CallbackPage from "./CallbackPage";
 
 export default function App() {
   return (

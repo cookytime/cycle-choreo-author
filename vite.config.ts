@@ -3,5 +3,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  server: { port: 8888 }
+  server: { 
+    port: 8888,
+    host: '127.0.0.1' // Use 127.0.0.1 instead of localhost for OAuth consistency
+  }
 })

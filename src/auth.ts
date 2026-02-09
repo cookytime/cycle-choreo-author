@@ -1,5 +1,9 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID as string;
-export const REDIRECT_URI = "http://127.0.0.1:8888/callback";
+
+// Use consistent redirect URI to avoid localStorage issues between localhost and 127.0.0.1
+// IMPORTANT: Must match exactly what's configured in your Spotify app settings
+export const REDIRECT_URI = import.meta.env.VITE_SPOTIFY_REDIRECT_URI || "http://127.0.0.1:8888/callback";
+
 export const SCOPES = "streaming user-read-playback-state user-modify-playback-state user-read-currently-playing";
 
 type TokenRecord = {
@@ -116,8 +120,23 @@ export async function getValidAccessToken(): Promise<string> {
 export async function loginWithSpotify() {
   if (!CLIENT_ID) throw new Error("Missing VITE_SPOTIFY_CLIENT_ID in .env");
 
+  // Ensure we're on the correct origin before storing verifier
+  const currentOrigin = window.location.origin;
+  const expectedOrigin = new URL(REDIRECT_URI).origin;
+  if (currentOrigin !== expectedOrigin) {
+    console.warn(
+      `Origin mismatch detected!\n` +
+      `Current: ${currentOrigin}\n` +
+      `Expected: ${expectedOrigin}\n` +
+      `Redirecting to correct origin...`
+    );
+    window.location.href = REDIRECT_URI.replace('/callback', window.location.pathname);
+    return;
+  }
+
   const verifier = randomString(64);
   localStorage.setItem(LS_VERIFIER, verifier);
+  console.log('[Auth] PKCE verifier stored in localStorage');
   const challenge = await sha256Base64Url(verifier);
 
   const params = new URLSearchParams({
@@ -134,7 +153,19 @@ export async function loginWithSpotify() {
 
 export async function handleCallback(code: string) {
   const verifier = localStorage.getItem(LS_VERIFIER);
-  if (!verifier) throw new Error("Missing PKCE verifier in storage (login again).");
+  if (!verifier) {
+    // Debug info to help diagnose the issue
+    const currentOrigin = window.location.origin;
+    const expectedUri = REDIRECT_URI;
+    throw new Error(
+      `Missing PKCE verifier in storage.\n\n` +
+      `Current origin: ${currentOrigin}\n` +
+      `Expected redirect URI: ${expectedUri}\n\n` +
+      `This usually means you accessed the app from a different origin than expected.\n` +
+      `Always use http://127.0.0.1:8888 (not localhost) to avoid this issue.\n\n` +
+      `Also confirm your Spotify app Redirect URI is exactly: ${REDIRECT_URI}`
+    );
+  }
 
   const body = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -163,4 +194,7 @@ export async function handleCallback(code: string) {
     refresh_token: data.refresh_token,
     scope: data.scope,
   });
+  
+  // Clean up the verifier after successful exchange
+  localStorage.removeItem(LS_VERIFIER);
 }

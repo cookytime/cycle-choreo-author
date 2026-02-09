@@ -19,3 +19,4 @@ Callback:
 ## Notes
 - Spotify Web Playback SDK requires Spotify Premium.
 - Token refresh is included if Spotify returns a refresh_token.
+- **IMPORTANT**: Always use `http://127.0.0.1:8888` (NOT `localhost:8888`) to avoid OAuth errors. Browsers treat these as different origins with separate localStorage.
