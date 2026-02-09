@@ -408,28 +408,19 @@ export default function EditorPage() {
       return transferResponse;
     };
 
-    let transferResponse: Response | null = null;
-    let transferError = "";
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      transferResponse = await transferPlayback();
-      if (transferResponse.ok) break;
-
-      transferError = await transferResponse.text();
-      const isDeviceNotFound =
-        transferResponse.status === 404 || transferError.toLowerCase().includes("device not found");
-
+    let transferResponse = await transferPlayback();
+    if (!transferResponse.ok) {
+      const transferError = await transferResponse.text();
+      const isDeviceNotFound = transferResponse.status === 404 || transferError.toLowerCase().includes("device not found");
       if (isDeviceNotFound) {
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        continue;
+        transferResponse = await transferPlayback();
       }
 
-      throw new Error(`Failed to transfer playback: ${transferResponse.status} ${transferError}`);
-    }
-
-    if (!transferResponse || !transferResponse.ok) {
-      setSpotifyStatus(`Waiting for Spotify device to be ready. ${transferError || "Device not found."}`);
-      return;
+      if (!transferResponse.ok) {
+        const retryError = await transferResponse.text();
+        throw new Error(`Failed to transfer playback: ${transferResponse.status} ${retryError || transferError}`);
+      }
     }
 
     const response = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(spotifyDeviceId)}`, {
